@@ -1,0 +1,208 @@
+{
+  "title": "Poker Tracker",
+  "uid": "poker-tracker",
+  "schemaVersion": 38,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-90d", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Profit net total",
+      "type": "stat",
+      "gridPos": { "x": 0, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT ROUND(SUM(total_won) - SUM(buyin_total), 2) AS net_profit FROM tournaments WHERE buyin_total IS NOT NULL",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "Tournois joués",
+      "type": "stat",
+      "gridPos": { "x": 4, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "none", "decimals": 0 } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT COUNT(*) AS tournaments FROM tournaments WHERE buyin_total IS NOT NULL",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "ROI moyen (%)",
+      "type": "stat",
+      "gridPos": { "x": 8, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT ROUND((SUM(total_won) - SUM(buyin_total)) / NULLIF(SUM(buyin_total), 0) * 100, 1) AS roi FROM tournaments WHERE buyin_total IS NOT NULL",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Heures jouées",
+      "type": "stat",
+      "gridPos": { "x": 12, "y": 0, "w": 4, "h": 4 },
+      "fieldConfig": { "defaults": { "unit": "h", "decimals": 1 } },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT ROUND(SUM(duration_seconds) / 3600.0, 1) AS hours FROM tournaments WHERE duration_seconds IS NOT NULL",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Courbe de profit cumulé",
+      "type": "timeseries",
+      "gridPos": { "x": 0, "y": 4, "w": 24, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyEUR",
+          "custom": { "lineWidth": 2, "fillOpacity": 10 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT started_at AS time, ROUND(SUM(total_won - buyin_total) OVER (ORDER BY started_at), 2) AS profit_cumule FROM tournaments WHERE buyin_total IS NOT NULL AND total_won IS NOT NULL ORDER BY started_at",
+          "format": "time_series"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Stats par type de tournoi",
+      "type": "table",
+      "gridPos": { "x": 0, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "center" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "net_profit" }, "properties": [{ "id": "unit", "value": "currencyEUR" }] },
+          { "matcher": { "id": "byName", "options": "roi_pct" },    "properties": [{ "id": "unit", "value": "percent" }] },
+          { "matcher": { "id": "byName", "options": "total_hours" }, "properties": [{ "id": "unit", "value": "h" }] }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT type, speed, tournaments, net_profit, roi_pct, avg_finish_pct, ROUND(total_hours::NUMERIC, 1) AS total_hours FROM v_global_stats ORDER BY roi_pct DESC",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "VPIP / PFR par position",
+      "type": "bargrouped",
+      "gridPos": { "x": 12, "y": 12, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "unit": "percent" }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT position, vpip_pct, pfr_pct FROM v_position_stats ORDER BY ARRAY_POSITION(ARRAY['BTN','CO','HJ','MP','UTG+1','UTG','SB','BB'], position)",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Net chips par position",
+      "type": "barchart",
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          },
+          "custom": { "fillOpacity": 80 }
+        }
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT position, total_net_chips FROM v_position_stats ORDER BY ARRAY_POSITION(ARRAY['BTN','CO','HJ','MP','UTG+1','UTG','SB','BB'], position)",
+          "format": "table"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "title": "Derniers tournois",
+      "type": "table",
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": { "custom": { "align": "center" } },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "roi" },         "properties": [{ "id": "unit", "value": "percent" }] },
+          { "matcher": { "id": "byName", "options": "buyin_total" }, "properties": [{ "id": "unit", "value": "currencyEUR" }] },
+          { "matcher": { "id": "byName", "options": "total_won" },   "properties": [{ "id": "unit", "value": "currencyEUR" }] }
+        ]
+      },
+      "targets": [
+        {
+          "datasource": { "type": "postgres", "uid": "${DS_POKERDB}" },
+          "rawSql": "SELECT started_at::date AS date, name, type, speed, players_registered, finish_position, buyin_total, total_won, roi, hands_played, ROUND(vpip_pct) AS vpip, ROUND(pfr_pct) AS pfr FROM v_tournament_stats WHERE buyin_total IS NOT NULL ORDER BY started_at DESC LIMIT 20",
+          "format": "table"
+        }
+      ]
+    }
+  ],
+  "__inputs": [
+    {
+      "name": "DS_POKERDB",
+      "type": "datasource",
+      "pluginId": "postgres",
+      "value": "PokerDB"
+    }
+  ]
+}

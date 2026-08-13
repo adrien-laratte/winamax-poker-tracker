@@ -1,0 +1,6 @@
+psycopg2-binary==2.9.9
+watchdog==4.0.1
+openpyxl==3.1.5
+# python:3.11-slim ships no zoneinfo database; without this, ZoneInfo("Europe/Paris")
+# raises and every exported timestamp would be off by one or two hours.
+tzdata==2024.1

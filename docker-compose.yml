@@ -1,0 +1,83 @@
+services:
+
+  postgres:
+    image: postgres:16
+    container_name: winamax-postgres
+    restart: always
+    environment:
+      POSTGRES_DB:       ${POSTGRES_DB}
+      POSTGRES_USER:     ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      # Dossier du projet plutôt que volume nommé : la base est visible à côté
+      # du compose, dans File Station, et suit les sauvegardes de /volume1/docker.
+      # À ne jamais placer dans un dossier répliqué par Drive ou Cloud Sync —
+      # une base vivante synchronisée fichier par fichier est une base corrompue.
+      - ./pgdata:/var/lib/postgresql/data
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    ports:
+      - "5431:5432"
+    networks:
+      - winamax-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  watcher:
+    build: .
+    container_name: winamax-watcher
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB_URL:         postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      WATCH_DIR:      ${WATCH_DIR}
+      WINAMAX_PSEUDO: ${WINAMAX_PSEUDO}
+      # Session workbooks. EXPORT_DIR is the only required one; the rest have
+      # sensible defaults.
+      EXPORT_DIR:            ${EXPORT_DIR}
+      SESSION_GAP_MINUTES:   ${SESSION_GAP_MINUTES:-45}
+      EXPORT_LOOKBACK_DAYS:  ${EXPORT_LOOKBACK_DAYS:-7}
+      EXPORT_GRACE_HOURS:    ${EXPORT_GRACE_HOURS:-6}
+      EXPORT_CHECK_SECONDS:  ${EXPORT_CHECK_SECONDS:-300}
+    volumes:
+      - ${WATCH_DIR}:${WATCH_DIR}:ro
+      # The only writable mount: this is where the .xlsx land. Mounted at the
+      # same path inside as outside, like WATCH_DIR above, so the EXPORT_DIR
+      # the container reads and the folder it actually writes to are one and
+      # the same — a mismatch would silently write into the container layer.
+      - ${EXPORT_DIR}:${EXPORT_DIR}
+    networks:
+      - winamax-net
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: winamax-grafana
+    restart: always
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER:     ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_AUTH_ANONYMOUS_ENABLED:  "false"
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    networks:
+      - winamax-net
+
+volumes:
+  # pgdata n'est plus déclaré ici : Postgres écrit dans ./pgdata. L'ancien
+  # volume nommé existe toujours côté Docker et garde les données d'avant la
+  # bascule — remettre les deux lignes suffit à y revenir.
+  grafana-data:
+
+networks:
+  winamax-net:
+    driver: bridge
