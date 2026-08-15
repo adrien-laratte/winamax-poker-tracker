@@ -20,7 +20,10 @@ from datetime import datetime
 #       actually uses, player names containing spaces, summaries holding one
 #       block per re-entry, optional "You won" / "You played" lines, headers
 #       with no ante, dead buttons, and split pots ("main pot" / "side pot N")
-PARSER_VERSION = 3
+#   4 → knockout bounties collected without cashing: a "You won" line carrying
+#       a bounty and no prize was matched by nothing and the entry stored as a
+#       plain bust (see _parse_winnings)
+PARSER_VERSION = 4
 
 # Every Winamax file starts with this, whatever the game or the language. Used
 # to tell a hand history from the thousands of unrelated .txt a backup folder
@@ -178,14 +181,61 @@ def _parse_summary_block(txt: str) -> dict:
         h, mi, s = (int(g) if g else 0 for g in m.groups())
         d["duration_seconds"] = h * 3600 + mi * 60 + s
 
-    # Winnings  →  "You won 6.15€ + Bounty 5.72€"  or  "You won 0.00€", and
-    # nothing at all when the player busted out of the money.
-    m = re.search(r"You won ([\d.]+)€(?: \+ Bounty ([\d.]+)€)?", txt)
-    d["prize_won"] = float(m.group(1)) if m else 0.0
-    d["bounty_won"] = float(m.group(2)) if m and m.group(2) else 0.0
+    d["prize_won"], d["bounty_won"] = _parse_winnings(txt)
     d["total_won"] = round(d["prize_won"] + d["bounty_won"], 2)
 
     return d
+
+
+# One euro amount, in either notation — the client writes "1€", "6.15€" and,
+# depending on its language, "6,15€".
+_AMOUNT = r"(\d+(?:[.,]\d+)?)\s*€"
+_WON_LINE = re.compile(r"You won ([^\n]+)")
+# "Bounty", "Bounties", "Bounty :" — the word is the anchor, not its position.
+_BOUNTY = re.compile(r"Bount(?:y|ies)\s*:?\s*" + _AMOUNT, re.IGNORECASE)
+_BOUNTY_LINE = re.compile(r"^\s*Bount(?:y|ies)[^\n:€]*:?\s*" + _AMOUNT, re.IGNORECASE | re.MULTILINE)
+_AMOUNT_RE = re.compile(_AMOUNT)
+
+
+def _amount(s: str) -> float:
+    return float(s.replace(",", "."))
+
+
+def _parse_winnings(txt: str) -> tuple[float, float]:
+    """
+    (prize_won, bounty_won) for one entry, in €.
+
+    Winamax prints a single line whose shape depends on what the entry brought
+    back, and the prize half is not always there:
+        "You won 6.15€ + Bounty 5.72€"   cashed in a knockout
+        "You won 6.15€"                  cashed, no bounties
+        "You won Bounty 1€"              bounties only — busted out of the
+                                         money in a knockout, which the older
+                                         "You won <amount>€ …" pattern could
+                                         not match at all: the whole line was
+                                         ignored and the entry booked as a
+                                         plain bust, primes included.
+    Nothing at all is printed when the entry brought back nothing, and that is
+    a genuine 0, not an unknown — it is what makes a -100% ROI come out right.
+
+    The bounty is read from its own keyword rather than from its position, so
+    the prize is whatever amount is left in front of it.
+    """
+    m = _WON_LINE.search(txt)
+    if m is None:
+        # Some builds put the bounty on a line of its own rather than inside
+        # the "You won" one; a knockout bust then has no "You won" at all.
+        b = _BOUNTY_LINE.search(txt)
+        return (0.0, _amount(b.group(1))) if b else (0.0, 0.0)
+
+    won = m.group(1)
+    bounty = 0.0
+    if (b := _BOUNTY.search(won)) is not None:
+        bounty = _amount(b.group(1))
+        won = won[: b.start()]
+
+    p = _AMOUNT_RE.search(won)
+    return (_amount(p.group(1)) if p else 0.0), bounty
 
 
 # ── History parser ────────────────────────────────────────────────────────────
