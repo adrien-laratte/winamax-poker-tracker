@@ -5,6 +5,12 @@
 set -e
 cd /volume1/docker/winamax-poker-tracker
 
+# Le nom de projet, épinglé plutôt que déduit du nom du dossier. C'est lui qui
+# fait le lien avec le projet de Container Manager : à nom identique, l'interface
+# et ce script pilotent les mêmes conteneurs. Sous un autre nom, compose voudrait
+# en créer un second jeu et buterait sur les container_name déjà pris.
+project=winamax-poker-tracker
+
 # La config de prod n'est pas dans le dépôt. Sans elle, compose démarrerait
 # avec des variables vides : Postgres créerait une base neuve, et le watcher
 # n'aurait ni dossier à surveiller ni dossier où écrire.
@@ -50,5 +56,9 @@ fi
 # script est lancé par le planificateur de tâches, déjà en root, les sudo
 # ci-dessous ne coûtent rien.
 git pull --ff-only
-sudo docker compose up -d --build
+sudo docker compose -p "$project" up -d --build
 sudo docker image prune -f
+
+echo
+echo "Conteneurs du projet $project :"
+sudo docker compose -p "$project" ps --format '  {{.Name}}\t{{.Status}}'
