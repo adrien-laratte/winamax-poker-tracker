@@ -13,23 +13,42 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
-# Où vit la base, ./pgdata par défaut. Un dossier de données PostgreSQL porte
-# toujours un PG_VERSION : son absence veut dire base vide.
-data=$(grep -E '^PGDATA_DIR=' .env | cut -d= -f2- | tr -d '"' | tr -d "'")
+# Où vit la base, ./pgdata par défaut. La valeur est débarrassée des retours
+# chariot et des espaces de fin : un .env passé par Windows ou par l'éditeur de
+# DSM en sème, et un chemin terminé par un \r invisible ne désigne rien.
+data=$(grep -E '^[[:space:]]*PGDATA_DIR=' .env | tail -1 | cut -d= -f2- \
+       | tr -d '\r"'\''' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//')
 data=${data:-./pgdata}
 
 # Démarrer sur un dossier vide initialise une base neuve — ce qui est juste au
 # tout premier lancement, et une catastrophe silencieuse après un déménagement
 # du projet : l'historique reste dans l'ancien pgdata pendant que le tracker
 # repart de zéro. Le cas légitime doit donc être demandé explicitement.
-if [ ! -f "$data/PG_VERSION" ] && [ "$1" != "--init-db" ]; then
-    echo "Aucune base dans $data."
+#
+# Un dossier de données PostgreSQL porte toujours un PG_VERSION, mais il
+# appartient à l'utilisateur postgres du conteneur (uid 999) en 0700 : hors
+# root, on ne peut pas regarder dedans. Ne pas voir le fichier ne veut donc pas
+# dire qu'il n'y est pas — d'où le deuxième test, qui distingue « dossier
+# absent » de « dossier fermé à clé ».
+if [ -f "$data/PG_VERSION" ]; then
+    :
+elif [ -d "$data" ] && [ ! -r "$data" ]; then
+    echo "Base présente dans $data — illisible par $(id -un), c'est normal :"
+    echo "elle appartient à postgres. Relancer avec sudo pour lever le doute."
+elif [ "$1" != "--init-db" ]; then
+    echo "Aucune base dans $data  (depuis $(pwd), en tant que $(id -un))"
     echo "  • déménagement : conteneurs arrêtés, copier l'ancienne avec"
     echo "      sudo cp -a /chemin/ancien/pgdata $data"
     echo "  • premier démarrage : relancer avec --init-db"
     exit 1
 fi
 
+# git en tant que propriétaire du clone, docker en root : l'inverse fâche tout
+# le monde. Un « sudo git pull » ferait apparaître des fichiers root dans une
+# copie de travail qui appartient à l'utilisateur, et git refuse de son côté de
+# travailler sur un dépôt dont le propriétaire n'est pas l'appelant. Si le
+# script est lancé par le planificateur de tâches, déjà en root, les sudo
+# ci-dessous ne coûtent rien.
 git pull --ff-only
-docker compose up -d --build
-docker image prune -f
+sudo docker compose up -d --build
+sudo docker image prune -f
