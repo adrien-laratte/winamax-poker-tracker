@@ -26,6 +26,7 @@ from psycopg2.extras import execute_values
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 
+import bankroll
 import exporter
 import sessions
 from parser import (
@@ -59,9 +60,7 @@ EXPORT_CHECK_SECONDS = int(os.environ.get("EXPORT_CHECK_SECONDS", 300))
 # BANKROLL_PLAYER matters as much as the path: the watch directory holds the
 # backups of several machines and more than one Winamax account, and a bankroll
 # that added two accounts together would describe neither of them.
-BANKROLL_FILE   = os.environ.get("BANKROLL_FILE") or (
-    os.path.join(EXPORT_DIR, "bankroll_poker_mtt.ods") if EXPORT_DIR else None
-)
+BANKROLL_FILE   = bankroll.default_path(EXPORT_DIR, os.environ.get("BANKROLL_FILE"))
 BANKROLL_PLAYER = os.environ.get("BANKROLL_PLAYER") or None
 
 # ── DB helpers ────────────────────────────────────────────────────────────────

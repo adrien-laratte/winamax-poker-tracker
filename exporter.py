@@ -1334,7 +1334,8 @@ def _update_ledger(path: str, meta: dict) -> bool:
 
 
 def export_session(conn, session_id: str, out_dir: str, *, gap_minutes: int,
-                   ledger: str | None = None, ledger_player: str | None = None) -> str | None:
+                   ledger: str | None = None, ledger_player: str | None = None,
+                   ledger_write: bool = True) -> str | None:
     data = sessions.fetch_session(conn, session_id, gap_minutes=gap_minutes)
     if data is None:
         print(f"[Export] session inconnue : {session_id}")
@@ -1345,8 +1346,13 @@ def export_session(conn, session_id: str, out_dir: str, *, gap_minutes: int,
     # several machines, and a bankroll that mixed two accounts would describe
     # neither.
     book = ledger if ledger and ledger_player in (None, meta["player"]) else None
+    # Read even when writing is off. Rebuilding history must not add rows to a
+    # file the player keeps by hand, but there is no reason for the workbook it
+    # produces to open on an empty bankroll cell.
     if book:
-        data["bankroll_start"] = bankroll.opening_for(book, session_id)
+        data["bankroll_start"] = bankroll.opening_for(
+            book, session_id, _local(meta["session_start"]).date()
+        )
 
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, _filename(meta))
@@ -1358,7 +1364,7 @@ def export_session(conn, session_id: str, out_dir: str, *, gap_minutes: int,
     # Recorded only once the ledger has had it. Leaving the session out of
     # session_exports is what brings it back on the next tick, which is the
     # whole retry mechanism for a spreadsheet that was open at the wrong time.
-    if book and not _update_ledger(book, meta):
+    if book and ledger_write and not _update_ledger(book, meta):
         return path
 
     _drop_previous(conn, session_id, path, out_dir)
@@ -1371,14 +1377,16 @@ def export_session(conn, session_id: str, out_dir: str, *, gap_minutes: int,
 
 
 def export_due(conn, out_dir: str, *, gap_minutes: int, lookback_days: int, grace_hours: int,
-               ledger: str | None = None, ledger_player: str | None = None) -> int:
+               ledger: str | None = None, ledger_player: str | None = None,
+               ledger_write: bool = True) -> int:
     """Every session that is over and not yet on disk. Used by the watcher tick."""
     due = sessions.due_sessions(
         conn, gap_minutes=gap_minutes, lookback_days=lookback_days, grace_hours=grace_hours
     )
     for meta in due:
         export_session(conn, meta["session_id"], out_dir, gap_minutes=gap_minutes,
-                       ledger=ledger, ledger_player=ledger_player)
+                       ledger=ledger, ledger_player=ledger_player,
+                       ledger_write=ledger_write)
     return len(due)
 
 
@@ -1406,7 +1414,9 @@ def main(argv=None) -> int:
     parser.add_argument("--no-bankroll", action="store_true",
                         help="ne pas toucher au fichier de bankroll")
     args = parser.parse_args(argv)
-    ledger = None if args.no_bankroll else args.bankroll
+    # Résolu ici pour le CLI comme pour le watcher, par la même fonction.
+    ledger = None if args.no_bankroll else bankroll.default_path(args.out, args.bankroll)
+    ledger_write = True
 
     if not args.db:
         parser.error("DB_URL manquant (variable d'environnement ou --db)")
@@ -1434,10 +1444,11 @@ def main(argv=None) -> int:
             # Rebuilding writes workbooks, never history into the ledger: that
             # file is the player's own, and pouring months of past sessions
             # into it is a decision to take deliberately, not a side effect of
-            # regenerating a folder of .xlsx.
+            # regenerating a folder of .xlsx. It is still read, so each workbook
+            # opens on the bankroll of its own evening.
             if ledger:
-                print("[Bankroll] reprise d'historique : le fichier de bankroll n'est pas touché")
-            ledger = None
+                print("[Bankroll] reprise d'historique : le fichier est lu, jamais modifié")
+            ledger_write = False
         else:
             count = export_due(
                 conn, args.out,
@@ -1445,6 +1456,7 @@ def main(argv=None) -> int:
                 lookback_days=int(os.environ.get("EXPORT_LOOKBACK_DAYS", 7)),
                 grace_hours=int(os.environ.get("EXPORT_GRACE_HOURS", 6)),
                 ledger=ledger, ledger_player=args.bankroll_player,
+                ledger_write=ledger_write,
             )
             print(f"[Export] {count} session(s) traitée(s)")
             return 0
@@ -1455,7 +1467,8 @@ def main(argv=None) -> int:
         print(f"[Export] {len(targets)} session(s) → {os.path.abspath(args.out)}")
         for session_id in targets:
             export_session(conn, session_id, args.out, gap_minutes=args.gap,
-                           ledger=ledger, ledger_player=args.bankroll_player)
+                           ledger=ledger, ledger_player=args.bankroll_player,
+                           ledger_write=ledger_write)
         return 0
     finally:
         conn.close()

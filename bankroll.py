@@ -43,6 +43,9 @@ NS = {
 SHEET_LEDGER    = "Suivi"
 SHEET_DASHBOARD = "Dashboard"
 
+# The name looked for in the export folder when none is configured.
+DEFAULT_NAME = "bankroll_poker_mtt.ods"
+
 # Layout of the "Suivi" sheet, 1-based like the spreadsheet itself.
 START_ROW  = 4      # B4 holds the opening bankroll
 HEADER_ROW = 5
@@ -378,16 +381,23 @@ class Ledger:
                 out.append(entry)
         return out
 
-    def bankroll_before(self, ref: str) -> float:
+    def bankroll_before(self, ref: str, day: date | None = None) -> float:
         """
         What the bankroll was worth when that session started.
 
         The session's own row is left out, so re-exporting a session reports
         the same figure as the first time rather than counting it twice.
+
+        A session with no row yet — a workbook rebuilt for an evening that was
+        never written to the ledger — is placed by its date instead, and stops
+        at the first row that comes after it. Without that, regenerating an old
+        workbook would show today's bankroll as its opening figure.
         """
         total = self.opening_bankroll
         for entry in self.rows():
             if entry["ref"] == ref:
+                break
+            if day is not None and entry["date"] and entry["date"] > day:
                 break
             if entry["filled"]:
                 total += entry["profit"]
@@ -616,7 +626,7 @@ def record_session(path: str, *, session_id: str, day: date, tournaments: int,
     return index
 
 
-def opening_for(path: str, session_id: str) -> float | None:
+def opening_for(path: str, session_id: str, day: date | None = None) -> float | None:
     """
     The bankroll a session started from, for the workbook's bankroll block.
 
@@ -624,9 +634,25 @@ def opening_for(path: str, session_id: str) -> float | None:
     the cell to be typed into, exactly as before, rather than failing an export.
     """
     try:
-        return Ledger(path).open().bankroll_before(session_id)
+        return Ledger(path).open().bankroll_before(session_id, day)
     except (LedgerError, OSError):
         return None
+
+
+def default_path(export_dir: str | None, configured: str | None = None) -> str | None:
+    """
+    Which ledger to use: the one configured, else the one kept with the
+    workbooks.
+
+    Both the watcher and the CLI resolve it here. They used to answer this
+    question separately, and disagreed: BANKROLL_FILE left empty — the normal
+    case, since the default is meant to cover it — gave the watcher a path and
+    the CLI nothing at all, so every export run by hand skipped the ledger
+    without a word.
+    """
+    if configured:
+        return configured
+    return os.path.join(export_dir, DEFAULT_NAME) if export_dir else None
 
 
 if __name__ == "__main__":
