@@ -59,6 +59,10 @@ git pull --ff-only
 sudo docker compose -p "$project" up -d --build
 sudo docker image prune -f
 
+# Interrogé par le label que compose pose sur chaque conteneur, plutôt que par
+# « compose ps » : les gabarits de --format ne sont pas acceptés par toutes les
+# versions de Compose, alors que « docker ps » les accepte depuis toujours.
 echo
 echo "Conteneurs du projet $project :"
-sudo docker compose -p "$project" ps --format '  {{.Name}}\t{{.Status}}'
+sudo docker ps --filter "label=com.docker.compose.project=$project" \
+    --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
