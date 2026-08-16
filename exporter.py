@@ -1413,6 +1413,9 @@ def main(argv=None) -> int:
                         help="ne porter au fichier que les sessions de ce joueur")
     parser.add_argument("--no-bankroll", action="store_true",
                         help="ne pas toucher au fichier de bankroll")
+    parser.add_argument("--bankroll-history", action="store_true",
+                        help="porter aussi les sessions d'une reprise d'historique "
+                             "(--since, --rebuild-all) dans le fichier de bankroll")
     args = parser.parse_args(argv)
     # Résolu ici pour le CLI comme pour le watcher, par la même fonction.
     ledger = None if args.no_bankroll else bankroll.default_path(args.out, args.bankroll)
@@ -1441,14 +1444,21 @@ def main(argv=None) -> int:
         elif args.rebuild_all or args.since:
             since = datetime.strptime(args.since, "%Y-%m-%d") if args.since else None
             targets = [m["session_id"] for m in sessions.list_sessions(conn, gap_minutes=args.gap, since=since)]
-            # Rebuilding writes workbooks, never history into the ledger: that
-            # file is the player's own, and pouring months of past sessions
-            # into it is a decision to take deliberately, not a side effect of
-            # regenerating a folder of .xlsx. It is still read, so each workbook
-            # opens on the bankroll of its own evening.
-            if ledger:
-                print("[Bankroll] reprise d'historique : le fichier est lu, jamais modifié")
-            ledger_write = False
+            # Rebuilding writes workbooks; it only writes rows into the ledger
+            # when asked for. That file is the player's own, and pouring months
+            # of past sessions into it has to be a decision, not a side effect
+            # of regenerating a folder of .xlsx. Read either way, so each
+            # workbook opens on the bankroll of its own evening.
+            #
+            # Sessions come out oldest first (list_sessions orders on
+            # session_start), which is what the bankroll column needs: it
+            # chains on the row above it.
+            ledger_write = args.bankroll_history
+            if ledger and not ledger_write:
+                print("[Bankroll] reprise d'historique : le fichier est lu, jamais modifié"
+                      " — utiliser --bankroll-history pour y porter ces sessions")
+            elif ledger:
+                print("[Bankroll] reprise d'historique portée au fichier, la plus ancienne d'abord")
         else:
             count = export_due(
                 conn, args.out,
