@@ -3,7 +3,7 @@
 # Le code vient de git ; la configuration et la base, elles, restent sur le NAS
 # et ne sont jamais touchées par un pull.
 set -e
-cd /volume1/docker/poker-tracker
+cd /volume1/docker/winamax-poker-tracker
 
 # La config de prod n'est pas dans le dépôt. Sans elle, compose démarrerait
 # avec des variables vides : Postgres créerait une base neuve, et le watcher
