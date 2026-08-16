@@ -1328,6 +1328,14 @@ def _update_ledger(path: str, meta: dict) -> bool:
     except bankroll.LedgerLocked:
         print(f"[Bankroll] {name} ouvert dans LibreOffice — session reprise au prochain passage")
         return False
+    except FileNotFoundError:
+        # Presque toujours la même cause dans un conteneur : le fichier existe
+        # sur le NAS, mais hors du seul dossier monté. Le dire ici épargne une
+        # heure de recherche à côté de la plaque.
+        print(f"[Bankroll] introuvable : {path}")
+        print("[Bankroll] le conteneur ne voit que le dossier d'export — placer le fichier "
+              "dedans, ou monter son dossier dans docker-compose.yml")
+        return True
     except (bankroll.LedgerError, OSError) as exc:
         print(f"[Bankroll] {name} non mis à jour : {exc}")
         return True

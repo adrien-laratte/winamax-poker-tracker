@@ -55,11 +55,18 @@ services:
       EXPORT_CHECK_SECONDS:  ${EXPORT_CHECK_SECONDS:-300}
     volumes:
       - ${WATCH_DIR}:${WATCH_DIR}:ro
-      # The only writable mount: this is where the .xlsx land. Mounted at the
-      # same path inside as outside, like WATCH_DIR above, so the EXPORT_DIR
-      # the container reads and the folder it actually writes to are one and
-      # the same — a mismatch would silently write into the container layer.
+      # Writable: this is where the .xlsx land. Mounted at the same path inside
+      # as outside, like WATCH_DIR above, so the EXPORT_DIR the container reads
+      # and the folder it actually writes to are one and the same — a mismatch
+      # would silently write into the container layer.
       - ${EXPORT_DIR}:${EXPORT_DIR}
+      # Le dossier du fichier de bankroll, quand il n'est pas rangé avec les
+      # classeurs. C'est bien le dossier qu'il faut monter, jamais le fichier :
+      # la mise à jour écrit un temporaire à côté du .ods puis le renomme
+      # par-dessus, et un renommage sur un point de montage est impossible.
+      # Par défaut le dossier d'export, auquel cas cette ligne fait doublon
+      # avec la précédente et ne change rien.
+      - ${BANKROLL_DIR:-${EXPORT_DIR}}:${BANKROLL_DIR:-${EXPORT_DIR}}
     networks:
       - winamax-net
 

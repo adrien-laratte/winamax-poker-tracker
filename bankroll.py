@@ -330,6 +330,7 @@ class Ledger:
             ET.tostring(self._root, encoding="UTF-8", xml_declaration=True),
             self._namespaces,
         )
+        before = os.stat(self.path)
         tmp = f"{self.path}.tmp"
         with zipfile.ZipFile(self.path) as src, \
              zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as out:
@@ -343,6 +344,16 @@ class Ledger:
                     continue
                 out.writestr(info, payload if info.filename == CONTENT
                              else src.read(info.filename))
+
+        # The replacement takes on the identity of the file it replaces. This
+        # one belongs to the player, who opens and edits it between two runs:
+        # letting it come back owned by the container's root, as the workbooks
+        # are, would eventually lock them out of their own bankroll.
+        os.chmod(tmp, before.st_mode & 0o7777)
+        try:
+            os.chown(tmp, before.st_uid, before.st_gid)
+        except (PermissionError, OSError):
+            pass    # only root may hand a file over to somebody else
         os.replace(tmp, self.path)
 
     # ── reading ──────────────────────────────────────────────────────────────
