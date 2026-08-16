@@ -6,5 +6,6 @@ COPY watcher.py .
 COPY parser.py .
 COPY sessions.py .
 COPY exporter.py .
+COPY bankroll.py .
 COPY schema.sql .
 CMD ["python", "watcher.py"]

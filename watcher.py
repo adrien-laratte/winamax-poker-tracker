@@ -12,6 +12,12 @@ adds what is new.
 
 The summary and history can arrive in any order; history creates a lightweight
 tournament placeholder row that the summary later fills in via UPSERT.
+
+Once a session has gone quiet it is exported: a workbook per session in
+EXPORT_DIR, and a row appended to the bankroll spreadsheet kept beside them
+(BANKROLL_FILE). Both go through exporter.py, on a timer rather than on file
+events — a batch of files landing an hour late must delay an export, never
+split a session in two.
 """
 
 import time
@@ -48,6 +54,15 @@ SESSION_GAP_MINUTES  = int(os.environ.get("SESSION_GAP_MINUTES", sessions.DEFAUL
 EXPORT_LOOKBACK_DAYS = int(os.environ.get("EXPORT_LOOKBACK_DAYS", 7))
 EXPORT_GRACE_HOURS   = int(os.environ.get("EXPORT_GRACE_HOURS", 6))
 EXPORT_CHECK_SECONDS = int(os.environ.get("EXPORT_CHECK_SECONDS", 300))
+
+# The bankroll spreadsheet, kept in the export folder alongside the workbooks.
+# BANKROLL_PLAYER matters as much as the path: the watch directory holds the
+# backups of several machines and more than one Winamax account, and a bankroll
+# that added two accounts together would describe neither of them.
+BANKROLL_FILE   = os.environ.get("BANKROLL_FILE") or (
+    os.path.join(EXPORT_DIR, "bankroll_poker_mtt.ods") if EXPORT_DIR else None
+)
+BANKROLL_PLAYER = os.environ.get("BANKROLL_PLAYER") or None
 
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
@@ -330,6 +345,8 @@ def export_tick():
             gap_minutes=SESSION_GAP_MINUTES,
             lookback_days=EXPORT_LOOKBACK_DAYS,
             grace_hours=EXPORT_GRACE_HOURS,
+            ledger=BANKROLL_FILE,
+            ledger_player=BANKROLL_PLAYER,
         )
     except Exception as exc:
         conn.rollback()
@@ -354,6 +371,18 @@ if __name__ == "__main__":
         print(f"[Export] {EXPORT_DIR} — coupure de session à {SESSION_GAP_MINUTES} min")
     else:
         print("[Export] désactivé (EXPORT_DIR non défini)")
+
+    # Said out loud at startup: a bankroll silently not updated for weeks is
+    # worse than one that was never switched on.
+    if not EXPORT_DIR:
+        pass
+    elif not os.path.exists(BANKROLL_FILE):
+        print(f"[Bankroll] fichier introuvable : {BANKROLL_FILE} — bankroll non tenue")
+    elif BANKROLL_PLAYER:
+        print(f"[Bankroll] {BANKROLL_FILE} — sessions de {BANKROLL_PLAYER}")
+    else:
+        print(f"[Bankroll] {BANKROLL_FILE} — tous les joueurs "
+              "(définir BANKROLL_PLAYER pour n'en suivre qu'un)")
 
     next_export = 0.0   # 0 so the first check runs right after the backfill
     try:

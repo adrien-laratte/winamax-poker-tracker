@@ -9,11 +9,16 @@ services:
       POSTGRES_USER:     ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      # Dossier du projet plutôt que volume nommé : la base est visible à côté
-      # du compose, dans File Station, et suit les sauvegardes de /volume1/docker.
-      # À ne jamais placer dans un dossier répliqué par Drive ou Cloud Sync —
-      # une base vivante synchronisée fichier par fichier est une base corrompue.
-      - ./pgdata:/var/lib/postgresql/data
+      # Dossier plutôt que volume nommé : la base est visible dans File Station
+      # et suit les sauvegardes de /volume1/docker. À ne jamais placer dans un
+      # dossier répliqué par Drive ou Cloud Sync — une base vivante synchronisée
+      # fichier par fichier est une base corrompue.
+      #
+      # PGDATA_DIR permet de la sortir du dossier du projet. Quand celui-ci est
+      # un clone git, la base se retrouve sinon dans l'arborescence de travail,
+      # où un « git clean -fdx » l'effacerait. Le chemin est relatif au compose
+      # tant qu'il ne commence pas par /.
+      - ${PGDATA_DIR:-./pgdata}:/var/lib/postgresql/data
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
     ports:
       - "5431:5432"
@@ -39,6 +44,11 @@ services:
       # Session workbooks. EXPORT_DIR is the only required one; the rest have
       # sensible defaults.
       EXPORT_DIR:            ${EXPORT_DIR}
+      # Le fichier de bankroll, tenu à jour à chaque fin de session. Par défaut
+      # bankroll_poker_mtt.ods dans EXPORT_DIR. BANKROLL_PLAYER limite le
+      # fichier à un compte : la sauvegarde en contient plusieurs.
+      BANKROLL_FILE:         ${BANKROLL_FILE:-}
+      BANKROLL_PLAYER:       ${BANKROLL_PLAYER:-}
       SESSION_GAP_MINUTES:   ${SESSION_GAP_MINUTES:-45}
       EXPORT_LOOKBACK_DAYS:  ${EXPORT_LOOKBACK_DAYS:-7}
       EXPORT_GRACE_HOURS:    ${EXPORT_GRACE_HOURS:-6}

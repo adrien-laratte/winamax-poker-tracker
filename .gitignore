@@ -1,0 +1,24 @@
+# Configuration de déploiement et secrets. Créés une fois sur le NAS, jamais
+# dans le dépôt : un fichier suivi par git serait écrasé au prochain pull, et
+# publié sur GitHub au prochain push. env.example liste les variables à
+# renseigner, sans les valeurs.
+env
+.env
+*.env
+
+# La base de données, montée à côté du compose. Elle n'a rien à faire dans le
+# dépôt — et surtout, elle ne doit jamais se retrouver à portée d'un
+# « git clean -fdx », qui l'effacerait sans sommation.
+pgdata/
+
+# Classeurs de session, fichier de bankroll : données personnelles, et le
+# fichier de bankroll est de toute façon la propriété de sa copie sur le NAS.
+*.ods
+*.xlsx
+
+# Python
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store

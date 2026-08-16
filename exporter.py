@@ -16,8 +16,13 @@ charts, number formats and conditional formatting that the ods writers cannot.
 Only the bankroll block holds live formulas. Everything else is written as a
 value, so the numbers are right the moment the file opens, whatever the
 spreadsheet's recalculation-on-load setting happens to be. The bankroll cells
-are the exception on purpose: they only mean anything once a figure is typed
-in, and typing recalculates them.
+are the exception on purpose: they hang off one figure, and typing into it
+recalculates them.
+
+That figure no longer has to be typed. When a bankroll ledger is configured
+(BANKROLL_FILE, or --bankroll), the session is also written into it — one row
+per session, see bankroll.py — and the workbook opens with the bankroll this
+session actually started from.
 
 The sheets are ordered by how much a single session can actually support:
 
@@ -47,6 +52,7 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.properties import PageSetupProperties
 
+import bankroll
 import sessions
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -328,9 +334,17 @@ def _sheet_resume(wb: Workbook, data: dict) -> None:
     )
 
     # Bankroll first: it is the only block that expects to be typed into, so it
-    # sits where the file opens rather than buried under the results.
+    # sits where the file opens rather than buried under the results. The
+    # figure comes pre-filled when the ledger could be read — it knows what the
+    # bankroll was worth the moment this session started, which is exactly what
+    # this cell used to ask the player to remember.
     s.section("BANKROLL")
-    bankroll = s.kv("Bankroll de départ", None, MONEY, "← à saisir", style="input")
+    opening = data.get("bankroll_start")
+    bankroll_ref = s.kv(
+        "Bankroll de départ", opening, MONEY,
+        "lue dans le fichier bankroll" if opening is not None else "← à saisir",
+        style="input",
+    )
     caves = s.kv("Règle de gestion (nb de caves)", 100, COUNT, "← à ajuster", style="input")
     s.blank()
 
@@ -363,28 +377,28 @@ def _sheet_resume(wb: Workbook, data: dict) -> None:
     s.section("GESTION DE BANKROLL")
     end_ref = s.kv(
         "Bankroll de fin",
-        f'=IFERROR(IF({bankroll}="","—",{bankroll}+{profit_ref}),"—")',
+        f'=IFERROR(IF({bankroll_ref}="","—",{bankroll_ref}+{profit_ref}),"—")',
         MONEY,
     )
     s.kv(
         "Variation",
-        f'=IFERROR(IF({bankroll}="","—",{profit_ref}/{bankroll}),"—")',
+        f'=IFERROR(IF({bankroll_ref}="","—",{profit_ref}/{bankroll_ref}),"—")',
         PCT_SIGNED,
     )
     s.kv(
         "Part de bankroll engagée",
-        f'=IFERROR(IF({bankroll}="","—",{invested:.2f}/{bankroll}),"—")',
+        f'=IFERROR(IF({bankroll_ref}="","—",{invested:.2f}/{bankroll_ref}),"—")',
         PCT,
     )
     s.kv(
         "Caves couvertes en fin de session",
-        f'=IFERROR(IF({bankroll}="","—",{end_ref}/{buyin_ref}),"—")',
+        f'=IFERROR(IF({bankroll_ref}="","—",{end_ref}/{buyin_ref}),"—")',
         COUNT,
         "à ce buy-in moyen",
     )
     s.kv(
         "Buy-in max selon la règle",
-        f'=IFERROR(IF(OR({bankroll}="",{caves}=0),"—",{end_ref}/{caves}),"—")',
+        f'=IFERROR(IF(OR({bankroll_ref}="",{caves}=0),"—",{end_ref}/{caves}),"—")',
         MONEY,
     )
     s.blank()
@@ -1289,34 +1303,82 @@ def _drop_previous(conn, session_id: str, keep: str, out_dir: str) -> None:
         print(f"[Export] remplace {os.path.basename(previous)}")
 
 
-def export_session(conn, session_id: str, out_dir: str, *, gap_minutes: int) -> str | None:
+def _update_ledger(path: str, meta: dict) -> bool:
+    """
+    Write the session into the bankroll spreadsheet.
+
+    False means "busy, come back later" and nothing else: the caller then
+    leaves the session unrecorded so the next pass tries again. Any other
+    failure is reported and swallowed — a spreadsheet that cannot be filled is
+    a reason to look at it, never a reason to hold up the export.
+    """
+    name = os.path.basename(path)
+    try:
+        row = bankroll.record_session(
+            path,
+            session_id=meta["session_id"],
+            day=_local(meta["session_start"]).date(),
+            tournaments=meta["tournaments_count"],
+            seconds=(meta["session_end"] - meta["session_start"]).total_seconds(),
+            invested=_f(meta["total_invested"]) or 0.0,
+            won=_f(meta["total_won"]) or 0.0,
+        )
+        print(f"[Bankroll] {name} — ligne {row}")
+        return True
+    except bankroll.LedgerLocked:
+        print(f"[Bankroll] {name} ouvert dans LibreOffice — session reprise au prochain passage")
+        return False
+    except (bankroll.LedgerError, OSError) as exc:
+        print(f"[Bankroll] {name} non mis à jour : {exc}")
+        return True
+
+
+def export_session(conn, session_id: str, out_dir: str, *, gap_minutes: int,
+                   ledger: str | None = None, ledger_player: str | None = None) -> str | None:
     data = sessions.fetch_session(conn, session_id, gap_minutes=gap_minutes)
     if data is None:
         print(f"[Export] session inconnue : {session_id}")
         return None
 
+    meta = data["meta"]
+    # The ledger follows one player: the watch directory holds the backups of
+    # several machines, and a bankroll that mixed two accounts would describe
+    # neither.
+    book = ledger if ledger and ledger_player in (None, meta["player"]) else None
+    if book:
+        data["bankroll_start"] = bankroll.opening_for(book, session_id)
+
     os.makedirs(out_dir, exist_ok=True)
-    path = os.path.join(out_dir, _filename(data["meta"]))
+    path = os.path.join(out_dir, _filename(meta))
 
     # Written before the old one is removed: a save that fails must not leave
     # the session with no workbook at all.
     build_workbook(data).save(path)
+
+    # Recorded only once the ledger has had it. Leaving the session out of
+    # session_exports is what brings it back on the next tick, which is the
+    # whole retry mechanism for a spreadsheet that was open at the wrong time.
+    if book and not _update_ledger(book, meta):
+        return path
+
     _drop_previous(conn, session_id, path, out_dir)
-    sessions.record_export(conn, data["meta"], path)
+    sessions.record_export(conn, meta, path)
     conn.commit()
 
     print(f"[Export] {os.path.basename(path)}"
-          f"  ({data['meta']['tournaments_count']} tournois, {data['meta']['hands_count']} mains)")
+          f"  ({meta['tournaments_count']} tournois, {meta['hands_count']} mains)")
     return path
 
 
-def export_due(conn, out_dir: str, *, gap_minutes: int, lookback_days: int, grace_hours: int) -> int:
+def export_due(conn, out_dir: str, *, gap_minutes: int, lookback_days: int, grace_hours: int,
+               ledger: str | None = None, ledger_player: str | None = None) -> int:
     """Every session that is over and not yet on disk. Used by the watcher tick."""
     due = sessions.due_sessions(
         conn, gap_minutes=gap_minutes, lookback_days=lookback_days, grace_hours=grace_hours
     )
     for meta in due:
-        export_session(conn, meta["session_id"], out_dir, gap_minutes=gap_minutes)
+        export_session(conn, meta["session_id"], out_dir, gap_minutes=gap_minutes,
+                       ledger=ledger, ledger_player=ledger_player)
     return len(due)
 
 
@@ -1335,7 +1397,16 @@ def main(argv=None) -> int:
                         default=int(os.environ.get("SESSION_GAP_MINUTES", sessions.DEFAULT_GAP_MINUTES)),
                         help="minutes d'inactivité qui séparent deux sessions")
     parser.add_argument("--db", default=os.environ.get("DB_URL"), help="DSN PostgreSQL")
+    parser.add_argument("--bankroll", metavar="FICHIER.ods",
+                        default=os.environ.get("BANKROLL_FILE"),
+                        help="fichier de bankroll à tenir à jour")
+    parser.add_argument("--bankroll-player", metavar="PSEUDO",
+                        default=os.environ.get("BANKROLL_PLAYER"),
+                        help="ne porter au fichier que les sessions de ce joueur")
+    parser.add_argument("--no-bankroll", action="store_true",
+                        help="ne pas toucher au fichier de bankroll")
     args = parser.parse_args(argv)
+    ledger = None if args.no_bankroll else args.bankroll
 
     if not args.db:
         parser.error("DB_URL manquant (variable d'environnement ou --db)")
@@ -1360,12 +1431,20 @@ def main(argv=None) -> int:
         elif args.rebuild_all or args.since:
             since = datetime.strptime(args.since, "%Y-%m-%d") if args.since else None
             targets = [m["session_id"] for m in sessions.list_sessions(conn, gap_minutes=args.gap, since=since)]
+            # Rebuilding writes workbooks, never history into the ledger: that
+            # file is the player's own, and pouring months of past sessions
+            # into it is a decision to take deliberately, not a side effect of
+            # regenerating a folder of .xlsx.
+            if ledger:
+                print("[Bankroll] reprise d'historique : le fichier de bankroll n'est pas touché")
+            ledger = None
         else:
             count = export_due(
                 conn, args.out,
                 gap_minutes=args.gap,
                 lookback_days=int(os.environ.get("EXPORT_LOOKBACK_DAYS", 7)),
                 grace_hours=int(os.environ.get("EXPORT_GRACE_HOURS", 6)),
+                ledger=ledger, ledger_player=args.bankroll_player,
             )
             print(f"[Export] {count} session(s) traitée(s)")
             return 0
@@ -1375,7 +1454,8 @@ def main(argv=None) -> int:
             return 0
         print(f"[Export] {len(targets)} session(s) → {os.path.abspath(args.out)}")
         for session_id in targets:
-            export_session(conn, session_id, args.out, gap_minutes=args.gap)
+            export_session(conn, session_id, args.out, gap_minutes=args.gap,
+                           ledger=ledger, ledger_player=args.bankroll_player)
         return 0
     finally:
         conn.close()
