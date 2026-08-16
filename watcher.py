@@ -357,8 +357,33 @@ def export_tick():
 
 # ── Entry point ───────────────────────────────────────────────────────────────
 
+def announce() -> None:
+    """
+    What this run is configured to do, said before it starts doing it.
+
+    Printed ahead of the backfill, not after: a parser upgrade makes that pass
+    re-read every file in the watch directory, which on a multi-machine backup
+    takes a long while. A start-up that stays silent until it is over cannot be
+    told from one that hung — and a bankroll quietly not updated for weeks is
+    worse than one that was never switched on.
+    """
+    if not EXPORT_DIR:
+        print("[Export] désactivé (EXPORT_DIR non défini)")
+        return
+
+    print(f"[Export] {EXPORT_DIR} — coupure de session à {SESSION_GAP_MINUTES} min")
+    if not os.path.exists(BANKROLL_FILE):
+        print(f"[Bankroll] fichier introuvable : {BANKROLL_FILE} — bankroll non tenue")
+    elif BANKROLL_PLAYER:
+        print(f"[Bankroll] {BANKROLL_FILE} — sessions de {BANKROLL_PLAYER}")
+    else:
+        print(f"[Bankroll] {BANKROLL_FILE} — tous les joueurs "
+              "(définir BANKROLL_PLAYER pour n'en suivre qu'un)")
+
+
 if __name__ == "__main__":
     init_schema()
+    announce()
 
     handler = WinamaxHandler()
     backfill(handler, WATCH_DIR)   # ingest existing files first
@@ -367,22 +392,6 @@ if __name__ == "__main__":
     observer.schedule(handler, path=WATCH_DIR, recursive=True)
     observer.start()
     print(f"[Watching] {WATCH_DIR}")
-    if EXPORT_DIR:
-        print(f"[Export] {EXPORT_DIR} — coupure de session à {SESSION_GAP_MINUTES} min")
-    else:
-        print("[Export] désactivé (EXPORT_DIR non défini)")
-
-    # Said out loud at startup: a bankroll silently not updated for weeks is
-    # worse than one that was never switched on.
-    if not EXPORT_DIR:
-        pass
-    elif not os.path.exists(BANKROLL_FILE):
-        print(f"[Bankroll] fichier introuvable : {BANKROLL_FILE} — bankroll non tenue")
-    elif BANKROLL_PLAYER:
-        print(f"[Bankroll] {BANKROLL_FILE} — sessions de {BANKROLL_PLAYER}")
-    else:
-        print(f"[Bankroll] {BANKROLL_FILE} — tous les joueurs "
-              "(définir BANKROLL_PLAYER pour n'en suivre qu'un)")
 
     next_export = 0.0   # 0 so the first check runs right after the backfill
     try:
